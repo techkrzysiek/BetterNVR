@@ -357,44 +357,18 @@ private fun displayAspect(size: Pair<Int, Int>): Float? {
 private val SQUEEZED_WIDTHS = setOf(352, 704, 720)
 private val SQUEEZED_HEIGHTS = setOf(240, 288, 480, 576)
 
-/** Turns the screen to landscape and back for the full-screen button. */
-private class OrientationLock(private val activity: Activity) : OrientationEventListener(activity) {
-    private var wantLandscape: Boolean? = null
-
-    fun request(landscape: Boolean) {
-        wantLandscape = landscape
-        activity.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        enable()
-    }
-
-    fun release() {
-        wantLandscape = null
-        disable()
-        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-    }
-
-    /** Once the phone is physically held the requested way, rotation follows the sensor again. */
-    override fun onOrientationChanged(degrees: Int) {
-        val want = wantLandscape ?: return
-        if (degrees == ORIENTATION_UNKNOWN) return
-        val held = when {
-            degrees in 60..120 || degrees in 240..300 -> true
-            degrees <= 20 || degrees >= 340 -> false
-            else -> return
-        }
-        if (held != want) return
-        // With auto-rotate switched off the system would turn the screen right back: keep the lock.
-        if (Settings.System.getInt(activity.contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) != 1) return
-        release()
-    }
-}
-
+/**
+ * Full-screen button → landscape (and back). The lock belongs to the activity: swiping to the next camera
+ * replaces this screen, and releasing the lock with it dropped the phone out of full screen.
+ */
 @Composable
 private fun rememberOrientationLock(): (Boolean) -> Unit {
-    val activity = LocalContext.current as? Activity ?: return {}
-    val lock = remember(activity) { OrientationLock(activity) }
-    DisposableEffect(lock) { onDispose { lock.release() } }
-    return remember(lock) { { landscape: Boolean -> lock.request(landscape) } }
+    val activity = LocalContext.current as? MainActivity ?: return {}
+    DisposableEffect(activity) {
+        activity.cameraScreenShown()
+        onDispose { activity.cameraScreenGone() }
+    }
+    return remember(activity) { { landscape: Boolean -> activity.orientationLock.request(landscape) } }
 }
 
 /** Previous and next camera of the same recorder that this account may watch. */

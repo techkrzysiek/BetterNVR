@@ -116,16 +116,9 @@ fun BetterNvrApp(openCamera: MutableStateFlow<ChannelRef?>) {
 
 @Composable
 fun SystemBars(hidden: Boolean) {
-    val view = LocalView.current
+    val activity = androidx.compose.ui.platform.LocalContext.current as? MainActivity ?: return
     DisposableEffect(hidden) {
-        val window = (view.context as? Activity)?.window
-        if (window != null) {
-            val c = WindowCompat.getInsetsController(window, view)
-            c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            if (hidden) c.hide(WindowInsetsCompat.Type.systemBars()) else c.show(WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose {
-            if (hidden && window != null) WindowCompat.getInsetsController(window, view).show(WindowInsetsCompat.Type.systemBars())
-        }
+        if (hidden) activity.hideSystemBars()
+        onDispose { if (hidden) activity.releaseSystemBars() }
     }
 }
