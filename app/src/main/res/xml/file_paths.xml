@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Android 8–9 save snapshots/clips as plain files in Pictures/BetterNVR and Movies/BetterNVR -->
+    <external-path name="pictures" path="Pictures/BetterNVR/" />
+    <external-path name="movies" path="Movies/BetterNVR/" />
+    <!-- recorder QR codes shared as pictures -->
+    <cache-path name="share" path="share/" />
+    <!-- downloaded update APK handed to the installer -->
+    <cache-path name="updates" path="updates/" />
+</paths>

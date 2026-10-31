@@ -1,0 +1,14 @@
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+keystore.properties
+keystore/
+.kotlin/
+*.apk
+*.jks
+*.keystore
+# camera footage captured from a real recorder for a local test
+app/src/test/resources/playback_packets.bin
