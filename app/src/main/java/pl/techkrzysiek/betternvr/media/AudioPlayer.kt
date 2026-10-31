@@ -17,7 +17,7 @@ import kotlin.concurrent.thread
  * Live keeps latency low (an overgrown queue is dropped); playback plays everything, the network side keeps
  * the backlog bounded (VideoDecoder.awaitRoom).
  */
-class AudioPlayer(private val live: Boolean = true) {
+class AudioPlayer(private val live: Boolean = true, private val clock: MediaClock? = null) {
     private val queue = LinkedBlockingDeque<DhavFrame>()
     @Volatile private var running = true
     @Volatile private var resetRequested = false
@@ -37,7 +37,7 @@ class AudioPlayer(private val live: Boolean = true) {
 
     fun submit(frame: DhavFrame) {
         if (!enabled || !running || !frame.isAudio || frame.audioCodec == null) return
-        if (queue.size > (if (live) 40 else 400)) queue.clear() // keep latency bounded
+        if (queue.size > (if (live) 300 else 400)) queue.clear() // far more than the jitter buffer holds: start afresh
         queue.offer(frame)
     }
 
@@ -59,6 +59,17 @@ class AudioPlayer(private val live: Boolean = true) {
                     releaseAll()
                 }
                 val f = queue.poll(50, TimeUnit.MILLISECONDS) ?: continue
+                // in step with the picture: written a little ahead of its time (the track's own short buffer)
+                clock?.let { c ->
+                    val due = c.dueNs(f.msCounter) - AUDIO_LEAD_NS
+                    while (running && !resetRequested) {
+                        val wait = due - System.nanoTime()
+                        if (wait <= 0) break
+                        Thread.sleep(minOf(wait / 1_000_000, 10L).coerceAtLeast(1))
+                    }
+                    if (resetRequested) return@let
+                }
+                if (resetRequested) continue
                 runCatching { play(f) }.onFailure {
                     Log.w(TAG, "audio frame failed", it)
                     releaseAll()
@@ -155,7 +166,7 @@ class AudioPlayer(private val live: Boolean = true) {
         track = AudioTrack.Builder()
             .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build())
             .setAudioFormat(AudioFormat.Builder().setSampleRate(rate).setChannelMask(mask).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-            .setBufferSizeInBytes(maxOf(min * 2, rate / 2))
+            .setBufferSizeInBytes(maxOf(min * 2, rate * channels * 2 / 10)) // ~100 ms: timing comes from the clock
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
             .also { it.play() }
@@ -171,6 +182,7 @@ class AudioPlayer(private val live: Boolean = true) {
 
     companion object {
         private const val TAG = "AudioPlayer"
+        private const val AUDIO_LEAD_NS = 60_000_000L
         private val AAC_RATES = intArrayOf(96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350)
 
         fun alaw(b: Byte): Short {

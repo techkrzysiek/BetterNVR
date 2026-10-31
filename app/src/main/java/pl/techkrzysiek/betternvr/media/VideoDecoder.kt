@@ -14,14 +14,15 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
- * Hardware H.264/H.265 decoding straight to a Surface. Live mode renders frames as soon as they are
- * decoded; playback mode paces them by their DHAV timestamps so the picture (and the timeline, which
- * follows rendered frames) moves at real speed.
+ * Hardware H.264/H.265 decoding straight to a Surface. Frames are shown when [clock] says they are due (their
+ * DHAV timestamps plus a jitter buffer shared with the sound), live and in playback alike, so the picture
+ * moves evenly however unevenly the recorder sends it.
  */
 class VideoDecoder(
     private val surface: Surface,
     private val live: Boolean,
     private val callback: Callback,
+    private val clock: MediaClock,
 ) {
     interface Callback {
         fun onVideoSize(width: Int, height: Int) {}
@@ -41,7 +42,7 @@ class VideoDecoder(
     @Volatile private var resync = true
     /** Playback speed factor (frames arrive N× faster, so they are shown N× faster). */
     @Volatile var speed = 1
-        set(v) { field = v; resync = true }
+        set(v) { field = v; clock.speed = v; resync = true }
 
     private var codec: MediaCodec? = null
     private var config: Config? = null
@@ -65,7 +66,8 @@ class VideoDecoder(
 
     fun submit(frame: DhavFrame) {
         if (!frame.isVideo || !running) return
-        if (live && queue.size > 30) {
+        // the jitter buffer keeps up to a few seconds queued; far beyond that the decoder is not keeping up
+        if (live && queue.size > 150) {
             Log.i(TAG, "live queue overflow (${queue.size}), waiting for next keyframe")
             queue.clear(); waitKeyOnSubmit = true
         }
@@ -84,7 +86,8 @@ class VideoDecoder(
      */
     fun awaitRoom(f: DhavFrame) {
         if (live) return
-        val limit = (AHEAD_MS * speed.coerceAtLeast(1)).coerceAtMost(MAX_AHEAD_MS)
+        // always room for the jitter buffer plus a margin, or the stream would be held back below what is needed
+        val limit = maxOf((AHEAD_MS * speed.coerceAtLeast(1)).coerceAtMost(MAX_AHEAD_MS), (clock.delayMs * speed.coerceAtLeast(1) + 2000).toInt())
         while (running && !resetRequested) {
             val shown = shownMs
             if (shown < 0) return
@@ -236,18 +239,19 @@ class VideoDecoder(
                     val (_, t, m) = frameTimes.removeFirst()
                     time = t; ms = m
                 }
-                if (live) {
-                    c.releaseOutputBuffer(idx, true)
-                } else {
-                    while (paused && running && !resetRequested) Thread.sleep(15)
-                    if (!running || resetRequested) {
-                        c.releaseOutputBuffer(idx, false); return
-                    }
-                    val target = renderTimeNs(info.presentationTimeUs)
+                while (paused && running && !resetRequested) Thread.sleep(15)
+                if (resync) { resync = false; clock.reset() }
+                val target = if (ms >= 0) clock.dueNs(ms) else renderTimeNs(info.presentationTimeUs)
+                // wait in small steps so a seek or release is not held up by a long buffer
+                while (running && !resetRequested) {
                     val wait = target - System.nanoTime() - 4_000_000
-                    if (wait > 0) Thread.sleep(wait / 1_000_000, (wait % 1_000_000).toInt())
-                    c.releaseOutputBuffer(idx, target)
+                    if (wait <= 0) break
+                    Thread.sleep(minOf(wait / 1_000_000, 20L).coerceAtLeast(1))
                 }
+                if (!running || resetRequested) {
+                    c.releaseOutputBuffer(idx, false); return
+                }
+                c.releaseOutputBuffer(idx, target)
                 if (ms >= 0) synchronized(shownLock) {
                     if (gen == generation) { shownMs = ms; shownAtNs = System.nanoTime() }
                 }

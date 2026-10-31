@@ -1,8 +1,8 @@
 import java.util.Properties
 
-// Version: "0.1.9" here; release builds get it from the git tag (-PappVersion=1.2.3 in .github/workflows/release.yml).
+// Version: "0.1.10" here; release builds get it from the git tag (-PappVersion=1.2.3 in .github/workflows/release.yml).
 // versionCode follows from it (major * 10000 + minor * 100 + patch), so every release installs over the previous one.
-val appVersion = (findProperty("appVersion") as String?)?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.9"
+val appVersion = (findProperty("appVersion") as String?)?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.10"
 val appVersionCode = (appVersion.split('.', '-').map { it.toIntOrNull() ?: 0 } + listOf(0, 0, 0)).let { it[0] * 10000 + it[1] * 100 + it[2] }
 
 // Over-the-air updates: the GitHub repository ("owner/name") whose releases the app checks. In GitHub Actions it is the

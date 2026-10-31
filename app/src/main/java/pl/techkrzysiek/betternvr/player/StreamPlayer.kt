@@ -53,7 +53,9 @@ class StreamPlayer(private val live: Boolean) : VideoDecoder.Callback {
     val audioOn: StateFlow<Boolean> = _audioOn.asStateFlow()
 
     @Volatile private var decoder: VideoDecoder? = null
-    private val audio = AudioPlayer(live)
+    /** Shared by picture and sound: when each frame is due, with the jitter buffer. */
+    private val clock = pl.techkrzysiek.betternvr.media.MediaClock(live)
+    private val audio = AudioPlayer(live, clock)
     @Volatile private var recorder: ClipRecorder? = null
     private var pendingVideo: MediaSaver.PendingVideo? = null
     private var surfaceView: View? = null
@@ -71,7 +73,8 @@ class StreamPlayer(private val live: Boolean) : VideoDecoder.Callback {
     fun attachSurface(view: View, surface: Surface) {
         decoder?.release()
         surfaceView = view
-        decoder = VideoDecoder(surface, live, this).also { it.speed = speed }
+        clock.reset()
+        decoder = VideoDecoder(surface, live, this, clock).also { it.speed = speed }
     }
 
     fun detachSurface() {
@@ -91,6 +94,7 @@ class StreamPlayer(private val live: Boolean) : VideoDecoder.Callback {
 
     /** Discards buffered media (before a seek / reconnect). */
     fun reset() {
+        clock.reset()
         decoder?.reset()
         audio.reset()
     }
@@ -100,7 +104,7 @@ class StreamPlayer(private val live: Boolean) : VideoDecoder.Callback {
         set(v) { decoder?.paused = v }
 
     var speed: Int = 1
-        set(v) { field = v; decoder?.speed = v }
+        set(v) { field = v; clock.speed = v; decoder?.speed = v }
 
     fun setPosition(t: LocalDateTime?) { _position.value = t }
 
