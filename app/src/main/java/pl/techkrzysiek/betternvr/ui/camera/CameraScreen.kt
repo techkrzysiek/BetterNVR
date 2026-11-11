@@ -223,7 +223,8 @@ fun CameraScreen(deviceId: String, channel: Int, onBack: () -> Unit, onSwitch: (
 
     // The video moves between the portrait, full-screen and PiP layouts without being recreated,
     // so rotating the phone does not restart the stream.
-    val zoom = remember(vm) { ZoomState() }
+    val zoomScope = rememberCoroutineScope() // zoom animations run on the screen's frame clock
+    val zoom = remember(vm) { ZoomState(zoomScope) }
     val video = remember(vm) {
         movableContentOf { m: Modifier ->
             Box(m.background(Color.Black), contentAlignment = Alignment.Center) {
