@@ -43,6 +43,8 @@ should work too.
 ## Privacy and security
 
 - The app connects only to the recorders you add, and to GitHub for updates.
+- An update is installed only if it carries the release workflow's Ed25519 signature (`.sig` next to the APK,
+  checked against the public key built into the app) and the app's own signing key.
 - Dahua's port-37777 protocol is not encrypted: the password never travels, but picture and sound do.
   Away from home, reach your recorders through a VPN rather than an open port.
 - Recorder logins stay on the phone and are excluded from backups.

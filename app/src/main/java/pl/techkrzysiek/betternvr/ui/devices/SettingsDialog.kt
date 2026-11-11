@@ -120,6 +120,7 @@ private fun problemText(p: Problem): String = when (p) {
     Problem.Offline -> stringResource(R.string.update_offline)
     Problem.NoRelease -> stringResource(R.string.update_no_release)
     Problem.WrongKey -> stringResource(R.string.update_wrong_key)
+    Problem.BadSignature -> stringResource(R.string.update_bad_signature)
     is Problem.Other -> stringResource(R.string.update_failed, p.detail)
 }
 

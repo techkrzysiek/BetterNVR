@@ -156,5 +156,6 @@
     <string name="update_offline">Brak połączenia z GitHubem. Sprawdź internet.</string>
     <string name="update_no_release">Nie znaleziono wydania na GitHubie.</string>
     <string name="update_wrong_key">Pobrany plik nie jest podpisany kluczem tej aplikacji, więc nie został zainstalowany.</string>
+    <string name="update_bad_signature">Pobrany plik nie ma prawidłowego podpisu wydania (Ed25519), więc nie został zainstalowany.</string>
     <string name="update_retry">Spróbuj ponownie</string>
 </resources>

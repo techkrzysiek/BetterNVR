@@ -1,13 +1,18 @@
 import java.util.Properties
 
-// Version: "0.1.12" here; release builds get it from the git tag (-PappVersion=1.2.3 in .github/workflows/release.yml).
+// Version: "0.1.13" here; release builds get it from the git tag (-PappVersion=1.2.3 in .github/workflows/release.yml).
 // versionCode follows from it (major * 10000 + minor * 100 + patch), so every release installs over the previous one.
-val appVersion = (findProperty("appVersion") as String?)?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.12"
+val appVersion = (findProperty("appVersion") as String?)?.removePrefix("v")?.takeIf { it.isNotBlank() } ?: "0.1.13"
 val appVersionCode = (appVersion.split('.', '-').map { it.toIntOrNull() ?: 0 } + listOf(0, 0, 0)).let { it[0] * 10000 + it[1] * 100 + it[2] }
 
 // Over-the-air updates: the GitHub repository ("owner/name") whose releases the app checks. In GitHub Actions it is the
 // repository being built (so forks update from themselves); elsewhere `updateRepo` from gradle.properties or -PupdateRepo=….
 val updateRepo = System.getenv("GITHUB_REPOSITORY")?.takeIf { it.isNotBlank() } ?: (findProperty("updateRepo") as String?).orEmpty()
+// Public half (32 bytes, hex) of the Ed25519 key the release workflow signs APKs with; the app installs only updates
+// carrying a valid signature from it. A fork that publishes its own releases puts its own key here (see README).
+val updateKey = (findProperty("updateKey") as String?).orEmpty().trim().lowercase().also {
+    require(it.isEmpty() || Regex("[0-9a-f]{64}").matches(it)) { "updateKey must be 64 hex digits (an Ed25519 public key)" }
+}
 
 plugins {
     id("com.android.application")
@@ -26,6 +31,7 @@ android {
         versionCode = appVersionCode
         versionName = appVersion
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
+        buildConfigField("String", "UPDATE_KEY", "\"$updateKey\"")
     }
 
     // Release key lives outside version control: keystore.properties + keystore/ locally (back both up),

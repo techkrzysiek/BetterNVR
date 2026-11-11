@@ -157,5 +157,6 @@
     <string name="update_offline">Cannot reach GitHub. Check the internet connection.</string>
     <string name="update_no_release">No release found on GitHub.</string>
     <string name="update_wrong_key">The downloaded file is not signed with this app\'s key, so it was not installed.</string>
+    <string name="update_bad_signature">The downloaded file does not carry a valid release signature (Ed25519), so it was not installed.</string>
     <string name="update_retry">Try again</string>
 </resources>

@@ -41,6 +41,8 @@ sealed interface Problem {
     data object Offline : Problem
     data object NoRelease : Problem
     data object WrongKey : Problem
+    /** The APK is missing the release workflow's Ed25519 signature, or it does not match. */
+    data object BadSignature : Problem
     data class Other(val detail: String) : Problem
 }
 
@@ -51,16 +53,19 @@ private class UpdateException(val problem: Problem) : Exception(problem.toString
  * repository's release workflow. Only GitHub is contacted: when the app opens, at most once a day (can be
  * switched off), or from the button in settings. The version comes from the redirect of the "latest release"
  * page, not from api.github.com, whose 60 requests an hour per address are easily used up behind a shared
- * (mobile, CGNAT) address; the API is asked only for the release notes, and may refuse. A downloaded APK must
- * carry this app's own signing key before Android's installer is opened (the installer checks it again).
+ * (mobile, CGNAT) address; the API is asked only for the release notes, and may refuse.
+ *
+ * Before Android's installer is opened, a downloaded APK must pass two checks: the Ed25519 signature that the release
+ * workflow publishes next to it (".sig", made with a key kept only in the repository's secrets; the public half is
+ * built into the app as [BuildConfig.UPDATE_KEY]), and the APK's own signing key, which must be this app's.
  */
 class Updater(private val context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
 
-    /** Builds made outside the release workflow have no repository to ask. */
-    val enabled get() = BuildConfig.UPDATE_REPO.isNotBlank()
+    /** Builds made outside the release workflow have no repository to ask (or no key to check updates with). */
+    val enabled get() = BuildConfig.UPDATE_REPO.isNotBlank() && updateKey.size == 32
     val repoUrl get() = if (enabled) "https://github.com/${BuildConfig.UPDATE_REPO}" else null
 
     var autoCheck: Boolean
@@ -98,6 +103,22 @@ class Updater(private val context: Context) {
         _state.value = try {
             val dir = File(context.cacheDir, "updates").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
             val file = File(dir, "BetterNVR-${release.version}.apk")
+            // the signature first: a release without one is not downloaded at all
+            val signature = try {
+                open(release.apkUrl + ".sig").inputStream.use { input ->
+                    val buf = ByteArray(SIGNATURE_MAX)
+                    var n = 0
+                    while (n < buf.size) {
+                        val r = input.read(buf, n, buf.size - n)
+                        if (r < 0) break
+                        n += r
+                    }
+                    buf.copyOf(n)
+                }
+            } catch (e: UpdateException) {
+                throw if (e.problem == Problem.NoRelease) UpdateException(Problem.BadSignature) else e
+            }
+            val verifier = Ed25519Verifier(updateKey, signature)
             val conn = open(release.apkUrl)
             val total = conn.contentLengthLong.takeIf { it > 0 } ?: release.size
             conn.inputStream.use { input ->
@@ -108,10 +129,15 @@ class Updater(private val context: Context) {
                         val n = input.read(buf)
                         if (n < 0) break
                         out.write(buf, 0, n)
+                        verifier.update(buf, 0, n)
                         done += n
                         if (total > 0) _state.value = UpdateState.Downloading(release, (done.toFloat() / total).coerceIn(0f, 1f))
                     }
                 }
+            }
+            if (!verifier.verify()) {
+                file.delete()
+                throw UpdateException(Problem.BadSignature)
             }
             if (!sameSigner(file)) {
                 file.delete()
@@ -222,6 +248,11 @@ class Updater(private val context: Context) {
 
     companion object {
         private const val DAY_MS = 24 * 3600 * 1000L
+        /** Ed25519 signatures are 64 bytes; anything longer is not one (read a little more to notice). */
+        private const val SIGNATURE_MAX = 128
+
+        /** Public half of the release workflow's update signing key (`updateKey` in gradle.properties). */
+        private val updateKey: ByteArray = BuildConfig.UPDATE_KEY.chunked(2).mapNotNull { it.toIntOrNull(16)?.toByte() }.toByteArray()
 
         /** "0.2.0" > "0.1.10": compared number by number. */
         fun isNewer(candidate: String, current: String): Boolean {
