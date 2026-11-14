@@ -106,7 +106,7 @@ private fun WidgetConfigScreen(onPick: (WidgetConfig) -> Unit, onClose: () -> Un
     val infos = remember { mutableStateMapOf<String, Result<DeviceInfo>>() }
     LaunchedEffect(devices) {
         devices.filter { it.id !in infos }.forEach { d ->
-            launch { infos[d.id] = runCatching { app.manager.infos.value[d.id] ?: app.manager.test(d) } }
+            launch { infos[d.id] = runCatching { app.manager.infos.value[d.id] ?: app.manager.test(d).first } }
         }
     }
     var interval by remember { mutableLongStateOf(CameraWidgets.interval(context)) }
