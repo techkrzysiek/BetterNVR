@@ -9,6 +9,10 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.MessageDigest
 import java.time.LocalDateTime
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.thread
+import kotlin.concurrent.withLock
 
 /**
  * Dahua private protocol ("DVRIP") on TCP 37777: every packet is a 32-byte header followed by
@@ -208,5 +212,55 @@ class DvripSocket(host: String, port: Int, connectTimeoutMs: Int = 6000, readTim
 
     override fun close() {
         runCatching { socket.close() }
+    }
+
+    companion object {
+        /** Head start of each address over the next one. */
+        const val STAGGER_MS = 400L
+
+        /**
+         * Connects to whichever of [endpoints] answers first, preferring the earlier ones: each address starts
+         * [STAGGER_MS] after the previous one (at once when all before it have failed), so a local address wins
+         * whenever it works, while an unreachable one costs this short delay instead of its whole timeout.
+         * Sockets that connect after the winner are closed. Throws [UnreachableException] when none answers
+         * (with a single address, its own error).
+         */
+        fun connectFirst(endpoints: List<Endpoint>, connectTimeoutMs: Int = 6000, readTimeoutMs: Int = 15000): Pair<DvripSocket, Endpoint> {
+            require(endpoints.isNotEmpty()) { "No address" }
+            if (endpoints.size == 1) endpoints[0].let { return DvripSocket(it.host, it.port, connectTimeoutMs, readTimeoutMs) to it }
+            val lock = ReentrantLock()
+            val changed = lock.newCondition()
+            var winner: Pair<DvripSocket, Endpoint>? = null
+            val errors = arrayOfNulls<Throwable>(endpoints.size)
+            val start = System.currentTimeMillis()
+            endpoints.forEachIndexed { i, ep ->
+                thread(name = "dh-connect-${ep.host}", isDaemon = true) {
+                    val go = lock.withLock {
+                        val at = start + i * STAGGER_MS
+                        while (winner == null && (0 until i).any { errors[it] == null }) {
+                            val wait = at - System.currentTimeMillis()
+                            if (wait <= 0) break
+                            changed.await(wait, TimeUnit.MILLISECONDS)
+                        }
+                        winner == null
+                    }
+                    if (go) {
+                        val result = runCatching { DvripSocket(ep.host, ep.port, connectTimeoutMs, readTimeoutMs) }
+                        lock.withLock {
+                            result.onSuccess { s -> if (winner == null) winner = s to ep else s.close() }
+                                .onFailure { errors[i] = it }
+                            changed.signalAll()
+                        }
+                    }
+                }
+            }
+            lock.withLock {
+                while (true) {
+                    winner?.let { return it }
+                    if (errors.all { it != null }) throw UnreachableException(endpoints.zip(errors.map { it!! }))
+                    changed.await()
+                }
+            }
+        }
     }
 }

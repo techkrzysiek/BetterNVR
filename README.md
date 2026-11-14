@@ -29,6 +29,8 @@
 - Pinch zoom, full screen, picture-in-picture
 - Home-screen widget with the latest picture of a camera
 - Recorders shared as QR codes
+- Several addresses per recorder in order of preference (e.g. home network, then VPN): it uses the first that
+  answers and moves back to a preferred one as soon as that works again
 - English and Polish
 - Updates from this repository's releases
 

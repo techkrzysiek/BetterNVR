@@ -12,6 +12,14 @@
     <string name="device_name">Name</string>
     <string name="device_host">Address (IP or domain)</string>
     <string name="device_port">Port</string>
+    <string name="device_address_n">Address %1$d</string>
+    <string name="device_address_up">Move up</string>
+    <string name="device_address_down">Move down</string>
+    <string name="device_alt_host_hint">e.g. 10.8.0.2 or nvr.example.com:37777</string>
+    <string name="device_alt_add">Add another address</string>
+    <string name="device_alt_remove">Remove address</string>
+    <string name="device_alt_info">Order sets the preference: the app connects to the first address that works. While it is on a later one (e.g. the VPN), it checks the earlier ones every 30 s and when the network changes, and moves back as soon as one answers.</string>
+    <string name="device_test_via">via %1$s</string>
     <string name="device_user">User</string>
     <string name="device_password">Password</string>
     <string name="device_test">Test connection</string>

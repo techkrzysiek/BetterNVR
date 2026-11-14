@@ -52,6 +52,17 @@ class PlaybackController(private val scope: CoroutineScope, private val manager:
     private var hasSurface = false
     private var resumeAt: LocalDateTime? = null
 
+    init {
+        // the recorder became reachable on a preferred address: continue from the same moment there
+        scope.launch {
+            manager.moved.collect { id ->
+                if (id == ref?.deviceId && playJob?.isActive == true && !_paused.value && !player.recording.value) {
+                    player.position.value?.let { launchPlay(it) }
+                }
+            }
+        }
+    }
+
     /** Loads the day's recordings; with [autoplay] starts at [startAt] (or a sensible default). */
     fun load(ref: ChannelRef, day: LocalDate, startAt: LocalDateTime? = null, autoplay: Boolean = true) {
         this.ref = ref

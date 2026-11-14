@@ -19,13 +19,29 @@ class RpcException(val method: String, val code: Long, message: String) : IOExce
 /**
  * One logged-in session with a Dahua recorder over TCP 37777. All calls block and must run off the
  * main thread. Live and playback streams use their own sub-connections bound to this session.
+ * A recorder may have several [endpoints] (e.g. LAN and VPN address): the session uses the first that answers
+ * (see [DvripSocket.connectFirst]), and its sub-connections go to that same address.
  */
 class DahuaClient(
-    val host: String,
-    val port: Int,
+    private val endpoints: List<Endpoint>,
     private val user: String,
     private val password: String,
+    /** When set, only a recorder with this login [realm] is logged in to; another device on an address counts as unreachable. */
+    private val expectRealm: String? = null,
 ) : Closeable {
+    constructor(host: String, port: Int, user: String, password: String) : this(listOf(Endpoint(host, port)), user, password)
+
+    /** The address in use: the one that answered in [connect]. */
+    @Volatile var endpoint: Endpoint = endpoints.first(); private set
+    val host: String get() = endpoint.host
+    val port: Int get() = endpoint.port
+
+    /**
+     * The recorder's login realm ("Login to <id>"). It is the same on every address of one recorder (the stored
+     * password hash depends on it), so it tells the recorder apart from another device answering on an address.
+     */
+    @Volatile var realm: String? = null; private set
+
     @Volatile var sessionId = 0; private set
     @Volatile var channelCount = 0; private set
     @Volatile var protocolVersion = 0; private set
@@ -38,6 +54,7 @@ class DahuaClient(
     private val liveLock = Any()
     private val liveStreams = HashMap<Int, Pair<MediaStream, Int>>()
     private val streams = ConcurrentHashMap.newKeySet<MediaStream>()
+    private val talks = ConcurrentHashMap.newKeySet<TalkSession>()
     private val pendingText = ConcurrentHashMap<Int, CompletableFuture<Map<String, String>>>()
     @Volatile private var pendingMonth: CompletableFuture<ByteArray>? = null
     private val monthLock = Any()
@@ -53,29 +70,57 @@ class DahuaClient(
 
     val isConnected: Boolean get() = main != null && !closed
 
+    /** Not used by any stream, playback, download or talk. */
+    val isIdle: Boolean get() = streams.isEmpty() && talks.isEmpty()
+
     fun connect() {
-        val s = DvripSocket(host, port)
-        try {
-            s.send(Dvrip.realmRequest())
-            val challenge = parseKv(String(s.read().body, Charsets.ISO_8859_1))
-            val realm = challenge["Realm"] ?: throw LoginException("Recorder did not send a login challenge", -1)
-            val random = challenge["Random"] ?: throw LoginException("Recorder did not send a login challenge", -1)
-            val (h, b) = Dvrip.loginRequest(user, password, realm, random)
-            s.send(h, b)
-            val reply = s.read().header
-            val result = ((reply[8].toInt() and 0xff) shl 8) or (reply[9].toInt() and 0xff)
-            if (result != 0x0008) throw LoginException(loginError(result), result)
-            sessionId = Dvrip.le32(reply, 16)
-            channelCount = (reply[10].toInt() and 0xff) or ((reply[2].toInt() and 0xff) shl 8)
-            protocolVersion = (reply[3].toInt() and 0xff) shr 4
-        } catch (e: Exception) {
+        var left = endpoints
+        val others = ArrayList<Pair<Endpoint, Throwable>>()
+        while (true) {
+            val (s, used) = try {
+                DvripSocket.connectFirst(left)
+            } catch (e: IOException) {
+                if (others.isEmpty()) throw e
+                throw UnreachableException(others + ((e as? UnreachableException)?.failures ?: listOf(left[0] to e)))
+            }
+            val loggedIn = try {
+                login(s)
+            } catch (e: Exception) {
+                s.close()
+                throw e
+            }
+            if (loggedIn) {
+                endpoint = used
+                s.readTimeoutMs = 60_000
+                main = s
+                thread(name = "dh-main-$host", isDaemon = true) { readLoop(s) }
+                thread(name = "dh-keepalive-$host", isDaemon = true) { keepAliveLoop(s) }
+                return
+            }
             s.close()
-            throw e
+            others += used to WrongDeviceException()
+            left = left - used
+            if (left.isEmpty()) throw UnreachableException(others)
         }
-        s.readTimeoutMs = 60_000
-        main = s
-        thread(name = "dh-main-$host", isDaemon = true) { readLoop(s) }
-        thread(name = "dh-keepalive-$host", isDaemon = true) { keepAliveLoop(s) }
+    }
+
+    /** Challenge and login on [s]; false, before any login attempt, when the realm is not [expectRealm]. */
+    private fun login(s: DvripSocket): Boolean {
+        s.send(Dvrip.realmRequest())
+        val challenge = parseKv(String(s.read().body, Charsets.ISO_8859_1))
+        val realm = challenge["Realm"] ?: throw LoginException("Recorder did not send a login challenge", -1)
+        val random = challenge["Random"] ?: throw LoginException("Recorder did not send a login challenge", -1)
+        if (expectRealm != null && realm != expectRealm) return false
+        val (h, b) = Dvrip.loginRequest(user, password, realm, random)
+        s.send(h, b)
+        val reply = s.read().header
+        val result = ((reply[8].toInt() and 0xff) shl 8) or (reply[9].toInt() and 0xff)
+        if (result != 0x0008) throw LoginException(loginError(result), result)
+        sessionId = Dvrip.le32(reply, 16)
+        channelCount = (reply[10].toInt() and 0xff) or ((reply[2].toInt() and 0xff) shl 8)
+        protocolVersion = (reply[3].toInt() and 0xff) shr 4
+        this.realm = realm
+        return true
     }
 
     private fun readLoop(s: DvripSocket) {
@@ -358,9 +403,11 @@ class DahuaClient(
             "EncodeFormat:2\r\nDepth:16\r\nFrequency:8000\r\nState:$state\r\nConnectionID:$cid\r\nTalkMode:$mode\r\nType:0\r\n\r\n"
         lateinit var session: TalkSession
         session = TalkSession(s) {
+            talks.remove(session)
             textLater(talk(0))
             textLater(deletePassive(cid))
         }
+        talks.add(session)
         try {
             text(talk(1))
         } catch (e: IOException) {

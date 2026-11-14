@@ -37,6 +37,16 @@ class LiveController(private val scope: CoroutineScope, private val manager: Dev
     private var forcedSub: Boolean? = null
     private var autoSub = true
 
+    init {
+        // the recorder became reachable on a preferred address (e.g. home network after the VPN): continue there
+        // (not while a clip is being recorded – that stream keeps the old session until it ends)
+        scope.launch {
+            manager.moved.collect { id ->
+                if (id == _source.value?.deviceId && job?.isActive == true && !player.recording.value) restart()
+            }
+        }
+    }
+
     fun setSource(ref: ChannelRef?) {
         if (_source.value == ref) return
         _source.value = ref

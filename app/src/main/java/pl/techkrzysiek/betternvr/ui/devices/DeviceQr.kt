@@ -52,7 +52,7 @@ import pl.techkrzysiek.betternvr.ui.common.shareMedia
 import java.io.File
 
 /**
- * One recorder as a QR code: `betternvr://device?n=…&h=…&p=…&u=…&pw=…`. Read by the in-app scanner, from a
+ * One recorder as a QR code: `betternvr://device?n=…&h=…&p=…&a=…&u=…&pw=…` (a = alternative addresses, comma-separated). Read by the in-app scanner, from a
  * picture, or by the phone's own camera app (the link opens BetterNVR). Fully offline (ZXing).
  */
 object DeviceQr {
@@ -60,6 +60,7 @@ object DeviceQr {
         .appendQueryParameter("n", d.name)
         .appendQueryParameter("h", d.host)
         .appendQueryParameter("p", d.port.toString())
+        .apply { if (d.altHosts.isNotEmpty()) appendQueryParameter("a", d.altHosts.joinToString(",")) }
         .appendQueryParameter("u", d.user)
         .apply { if (withPassword) appendQueryParameter("pw", d.password) }
         .build().toString()
@@ -73,6 +74,7 @@ object DeviceQr {
             name = uri.getQueryParameter("n").orEmpty(), host = host,
             port = uri.getQueryParameter("p")?.toIntOrNull() ?: 37777,
             user = uri.getQueryParameter("u").orEmpty(), password = uri.getQueryParameter("pw").orEmpty(),
+            altHosts = uri.getQueryParameter("a").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() },
         )
     }
 

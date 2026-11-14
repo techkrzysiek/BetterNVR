@@ -44,6 +44,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import pl.techkrzysiek.betternvr.proto.Endpoint
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -96,6 +101,7 @@ fun DevicesScreen(onOpen: (String) -> Unit, onMultiView: (String) -> Unit, onOpe
     val devices by app.store.devices.collectAsState()
     val infos by app.manager.infos.collectAsState()
     val errors by app.manager.errors.collectAsState()
+    val via by app.manager.via.collectAsState()
     val noCamera by app.manager.noCamera.collectAsState()
     val thumbVersion by app.thumbnails.version.collectAsState()
     var editing by remember { mutableStateOf<Device?>(null) }
@@ -204,7 +210,9 @@ fun DevicesScreen(onOpen: (String) -> Unit, onMultiView: (String) -> Unit, onOpe
                                 Text(d.name.ifBlank { d.host }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
                                     when {
-                                        info != null -> stringResource(R.string.device_connected, info.type.ifBlank { "NVR" }, (0 until info.channelCount).count { info.canLive(it) || info.canPlay(it) })
+                                        info != null -> stringResource(R.string.device_connected, info.type.ifBlank { "NVR" }, (0 until info.channelCount).count { info.canLive(it) || info.canPlay(it) }) +
+                                            // with several addresses, which one is in use
+                                            (via[d.id]?.takeIf { d.altHosts.isNotEmpty() }?.let { " · " + it.label(d.port) } ?: "")
                                         err != null -> err
                                         else -> stringResource(R.string.device_testing)
                                     },
@@ -294,22 +302,29 @@ private fun DeviceEditDialog(initial: Device?, prefill: Device? = null, onDismis
     val scope = rememberCoroutineScope()
     val start = initial ?: prefill
     var name by remember { mutableStateOf(start?.name ?: "") }
-    var host by remember { mutableStateOf(start?.host ?: "") }
     var port by remember { mutableStateOf((start?.port ?: 37777).toString()) }
     var user by remember { mutableStateOf(start?.user ?: "admin") }
     var password by remember { mutableStateOf(start?.password ?: "") }
+    val addresses = remember { mutableStateListOf<String>().apply { add(start?.host.orEmpty()); addAll(start?.altHosts.orEmpty()) } }
     var showPassword by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     val filledFromQr = stringResource(R.string.device_qr_imported)
     val notOurQr = stringResource(R.string.device_qr_invalid)
     var result by remember { mutableStateOf<Pair<Boolean, String>?>(if (prefill != null) true to filledFromQr else null) }
     val okFormat = stringResource(R.string.device_test_ok)
+    val viaFormat = stringResource(R.string.device_test_via)
 
-    fun build() = Device(
-        id = initial?.id ?: java.util.UUID.randomUUID().toString(),
-        name = name.trim(), host = host.trim(), port = port.toIntOrNull() ?: 37777, user = user.trim(), password = password,
-    )
-    val valid = host.isNotBlank() && user.isNotBlank() && (port.toIntOrNull() ?: 0) in 1..65535
+    fun build(): Device {
+        val list = addresses.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        return Device(
+            id = initial?.id ?: java.util.UUID.randomUUID().toString(),
+            name = name.trim(), host = list.firstOrNull().orEmpty(), port = port.toIntOrNull() ?: 37777, user = user.trim(), password = password,
+            altHosts = list.drop(1),
+        )
+    }
+    val portNumber = port.toIntOrNull() ?: 0
+    val badAddresses = addresses.map { it.isNotBlank() && Endpoint.parse(it, portNumber.coerceIn(1, 65535)) == null }
+    val valid = addresses.any { it.isNotBlank() } && user.isNotBlank() && portNumber in 1..65535 && badAddresses.none { it }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -318,16 +333,44 @@ private fun DeviceEditDialog(initial: Device?, prefill: Device? = null, onDismis
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (initial == null) QrImportButtons { d ->
                     if (d == null) result = false to notOurQr else {
-                        name = d.name; host = d.host; port = d.port.toString(); user = d.user
+                        name = d.name; port = d.port.toString(); user = d.user
+                        addresses.clear(); addresses.add(d.host); addresses.addAll(d.altHosts)
                         if (d.password.isNotEmpty()) password = d.password
                         result = true to filledFromQr
                     }
                 }
                 OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.device_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
-                    host, { host = it }, label = { Text(stringResource(R.string.device_host)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                )
+                // addresses in order of preference (e.g. home network first, VPN second)
+                addresses.forEachIndexed { i, address ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            address, { addresses[i] = it },
+                            label = { Text(if (addresses.size == 1) stringResource(R.string.device_host) else stringResource(R.string.device_address_n, i + 1)) },
+                            placeholder = if (i > 0) { { Text(stringResource(R.string.device_alt_host_hint)) } } else null,
+                            singleLine = true, modifier = Modifier.weight(1f), isError = badAddresses.getOrElse(i) { false },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            trailingIcon = if (addresses.size > 1) {
+                                { IconButton(onClick = { addresses.removeAt(i) }) { Icon(Icons.Filled.Close, stringResource(R.string.device_alt_remove)) } }
+                            } else null,
+                        )
+                        if (addresses.size > 1) Column {
+                            IconButton(onClick = { addresses.add(i - 1, addresses.removeAt(i)) }, enabled = i > 0, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Filled.KeyboardArrowUp, stringResource(R.string.device_address_up))
+                            }
+                            IconButton(onClick = { addresses.add(i + 1, addresses.removeAt(i)) }, enabled = i < addresses.lastIndex, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Filled.KeyboardArrowDown, stringResource(R.string.device_address_down))
+                            }
+                        }
+                    }
+                }
+                if (addresses.size > 1) {
+                    Text(stringResource(R.string.device_alt_info), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { addresses.add("") }, enabled = addresses.size < MAX_ADDRESSES) {
+                    Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.device_alt_add))
+                }
                 OutlinedTextField(
                     port, { port = it.filter(Char::isDigit).take(5) }, label = { Text(stringResource(R.string.device_port)) }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -350,8 +393,10 @@ private fun DeviceEditDialog(initial: Device?, prefill: Device? = null, onDismis
                             testing = true; result = null
                             scope.launch {
                                 result = try {
-                                    val info = app.manager.test(build())
-                                    true to String.format(okFormat, info.type, info.version, info.channelCount)
+                                    val d = build()
+                                    val (info, used) = app.manager.test(d)
+                                    true to String.format(okFormat, info.type, info.version, info.channelCount) +
+                                        (if (d.altHosts.isNotEmpty()) "\n" + viaFormat.format(used.label(d.port)) else "")
                                 } catch (e: Exception) {
                                     false to (e.message ?: e.javaClass.simpleName)
                                 }
@@ -376,3 +421,6 @@ private fun DeviceEditDialog(initial: Device?, prefill: Device? = null, onDismis
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
+
+/** Addresses per recorder (each unreachable one delays the next by DvripSocket.STAGGER_MS). */
+private const val MAX_ADDRESSES = 5

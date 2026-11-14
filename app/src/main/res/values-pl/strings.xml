@@ -11,6 +11,14 @@
     <string name="device_name">Nazwa</string>
     <string name="device_host">Adres (IP lub domena)</string>
     <string name="device_port">Port</string>
+    <string name="device_address_n">Adres %1$d</string>
+    <string name="device_address_up">Przesuń wyżej</string>
+    <string name="device_address_down">Przesuń niżej</string>
+    <string name="device_alt_host_hint">np. 10.8.0.2 lub nvr.example.pl:37777</string>
+    <string name="device_alt_add">Dodaj kolejny adres</string>
+    <string name="device_alt_remove">Usuń adres</string>
+    <string name="device_alt_info">Kolejność to pierwszeństwo: aplikacja łączy się z pierwszym działającym adresem. Gdy jest na dalszym (np. VPN), co 30 s i po każdej zmianie sieci sprawdza wcześniejsze i wraca na nie, gdy tylko odpowiedzą.</string>
+    <string name="device_test_via">przez %1$s</string>
     <string name="device_user">Użytkownik</string>
     <string name="device_password">Hasło</string>
     <string name="device_test">Sprawdź połączenie</string>

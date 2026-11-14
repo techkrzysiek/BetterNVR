@@ -201,7 +201,7 @@ object CameraWidgets {
                 val device = app.store.device(deviceId) ?: return@forEach
                 val refs = list.map { it.second.ref }.distinct()
                 runCatching {
-                    DahuaClient(device.host, device.port, device.user, device.password).use { client ->
+                    DahuaClient(device.endpoints, device.user, device.password).use { client ->
                         client.connect()
                         refs.forEach { ref ->
                             // main stream (HD) like the camera view; the sub-stream only if that gives nothing
